@@ -168,7 +168,7 @@ app.mount(
 
 @app.get("/", include_in_schema=False)
 def server_ui():
-    return FileResponse("static/index.html")
+    return FileResponse("static/index_1.html")
 
 
 # -------------------------

@@ -1,0 +1,932 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emotion Reader — BiGRU</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..700,0..100&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#100e17;
+    --surface:#1b1826;
+    --surface-hi:#242032;
+    --border: rgba(243,239,230,0.09);
+    --border-hi: rgba(243,239,230,0.2);
+    --text:#f3efe6;
+    --muted:#9a93a8;
+    --faint:#635d72;
+
+    --sadness:#5c7aea;
+    --joy:#f2b705;
+    --love:#ef5da8;
+    --anger:#e8543f;
+    --fear:#8a63d4;
+    --surprise:#2fbf9d;
+
+    --display: 'Fraunces', serif;
+    --body: 'Manrope', sans-serif;
+    --mono: 'JetBrains Mono', monospace;
+
+    --mx: 50%;
+    --my: 40%;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html{ scroll-behavior:smooth; }
+
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:var(--body);
+    min-height:100vh;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+    position:relative;
+  }
+
+  /* ---------- ambient aurora background ---------- */
+
+  .aurora{
+    position:fixed;
+    inset:0;
+    z-index:0;
+    pointer-events:none;
+    overflow:hidden;
+  }
+  .aurora span{
+    position:absolute;
+    border-radius:50%;
+    filter:blur(90px);
+    opacity:0.35;
+    will-change:transform;
+  }
+  .aurora .a1{
+    width:620px; height:620px; top:-220px; left:-160px;
+    background:radial-gradient(circle, var(--fear), transparent 70%);
+    animation: drift1 26s ease-in-out infinite;
+  }
+  .aurora .a2{
+    width:560px; height:560px; top:-120px; right:-200px;
+    background:radial-gradient(circle, var(--surprise), transparent 70%);
+    animation: drift2 32s ease-in-out infinite;
+  }
+  .aurora .a3{
+    width:520px; height:520px; bottom:-260px; left:30%;
+    background:radial-gradient(circle, var(--love), transparent 70%);
+    opacity:0.22;
+    animation: drift3 38s ease-in-out infinite;
+  }
+  @keyframes drift1{
+    0%,100%{ transform:translate(0,0) scale(1); }
+    50%{ transform:translate(60px,50px) scale(1.08); }
+  }
+  @keyframes drift2{
+    0%,100%{ transform:translate(0,0) scale(1); }
+    50%{ transform:translate(-70px,40px) scale(0.94); }
+  }
+  @keyframes drift3{
+    0%,100%{ transform:translate(0,0) scale(1); }
+    50%{ transform:translate(40px,-40px) scale(1.05); }
+  }
+
+  .grain{
+    position:fixed; inset:0; z-index:1;
+    pointer-events:none;
+    opacity:0.035;
+    mix-blend-mode:overlay;
+  }
+
+  .cursor-glow{
+    position:fixed;
+    inset:0;
+    z-index:0;
+    pointer-events:none;
+    background:radial-gradient(420px 420px at var(--mx) var(--my), rgba(243,239,230,0.05), transparent 70%);
+    transition:background .1s ease-out;
+  }
+
+  .wrap{
+    max-width:1040px;
+    margin:0 auto;
+    padding:0 24px;
+    position:relative;
+    z-index:2;
+  }
+
+  a{ color:inherit; }
+  ::selection{ background:var(--love); color:var(--ink); }
+
+  /* ---------- header ---------- */
+
+  header{ padding:28px 0 0; }
+  .header-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding-bottom:20px;
+    border-bottom:1px solid var(--border);
+    opacity:0;
+    animation: fadeUp .7s ease forwards;
+  }
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .eyebrow b{ color:var(--text); font-weight:600; }
+
+  .status{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--muted);
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .status-dot{
+    width:7px; height:7px; border-radius:50%;
+    background:var(--faint);
+    box-shadow:0 0 0 0 rgba(47,191,157,0.5);
+  }
+  .status-dot.on{ background:var(--surprise); animation:pulse 2.4s ease-in-out infinite; }
+  .status-dot.off{ background:var(--anger); }
+  @keyframes pulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(47,191,157,0.45); }
+    50%{ box-shadow:0 0 0 5px rgba(47,191,157,0); }
+  }
+
+  /* ---------- hero ---------- */
+
+  .hero{ padding:64px 0 20px; }
+
+  h1{
+    font-family:var(--display);
+    font-weight:400;
+    font-size:clamp(34px, 5.6vw, 60px);
+    letter-spacing:-0.01em;
+    line-height:1.06;
+    max-width:16ch;
+  }
+  h1 .line{
+    display:block;
+    overflow:hidden;
+  }
+  h1 .line span{
+    display:inline-block;
+    opacity:0;
+    transform:translateY(100%);
+    animation: lineUp .8s cubic-bezier(.2,.8,.2,1) forwards;
+  }
+  h1 .line:nth-child(2) span{ animation-delay:.12s; }
+  h1 em{ font-style:italic; font-weight:300; color:var(--muted); }
+
+  @keyframes lineUp{
+    to{ opacity:1; transform:translateY(0); }
+  }
+  @keyframes fadeUp{
+    from{ opacity:0; transform:translateY(10px); }
+    to{ opacity:1; transform:translateY(0); }
+  }
+
+  .sub{
+    margin-top:18px;
+    color:var(--muted);
+    font-size:16px;
+    max-width:46ch;
+    opacity:0;
+    animation: fadeUp .7s ease .35s forwards;
+  }
+
+  /* ---------- input console ---------- */
+
+  .console{
+    margin-top:40px;
+    position:relative;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:18px;
+    padding:6px;
+    opacity:0;
+    animation: fadeUp .7s ease .48s forwards;
+  }
+  .console::before{
+    content:'';
+    position:absolute;
+    inset:-1px;
+    border-radius:19px;
+    padding:1px;
+    background:conic-gradient(from var(--ring-angle,0deg), var(--fear), var(--love), var(--joy), var(--surprise), var(--fear));
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;
+    mask-composite:exclude;
+    opacity:0;
+    transition:opacity .4s ease;
+    animation: spinRing 6s linear infinite;
+    pointer-events:none;
+  }
+  .console:focus-within::before{ opacity:0.5; }
+  @keyframes spinRing{
+    to{ --ring-angle:360deg; }
+  }
+  @property --ring-angle{
+    syntax:'<angle>';
+    inherits:false;
+    initial-value:0deg;
+  }
+
+  textarea{
+    position:relative;
+    z-index:1;
+    width:100%;
+    resize:none;
+    background:transparent;
+    border:none;
+    outline:none;
+    color:var(--text);
+    font-family:var(--body);
+    font-size:17px;
+    padding:18px 18px 8px;
+    min-height:88px;
+    font-weight:500;
+  }
+  textarea::placeholder{ color:var(--faint); }
+
+  .console-footer{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:8px 12px 12px 18px;
+    position:relative;
+    z-index:1;
+  }
+  .listening{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--faint);
+  }
+  .listening .dots{ display:inline-flex; gap:3px; }
+  .listening .dots i{
+    width:4px; height:4px; border-radius:50%;
+    background:var(--faint);
+    display:inline-block;
+    animation:blink 1.3s ease-in-out infinite;
+  }
+  .listening .dots i:nth-child(2){ animation-delay:.15s; }
+  .listening .dots i:nth-child(3){ animation-delay:.3s; }
+  @keyframes blink{
+    0%,80%,100%{ opacity:.25; transform:translateY(0); }
+    40%{ opacity:1; transform:translateY(-2px); }
+  }
+
+  button.submit{
+    position:relative;
+    overflow:hidden;
+    font-family:var(--body);
+    font-weight:700;
+    font-size:14.5px;
+    color:var(--ink);
+    background:var(--text);
+    border:none;
+    padding:12px 20px;
+    border-radius:11px;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transition:transform .18s ease, background .18s ease, opacity .18s ease;
+  }
+  button.submit::after{
+    content:'';
+    position:absolute;
+    top:0; left:-60%;
+    width:40%; height:100%;
+    background:linear-gradient(115deg, transparent, rgba(0,0,0,0.12), transparent);
+    transform:skewX(-20deg);
+    transition:left .5s ease;
+  }
+  button.submit:hover:not(:disabled)::after{ left:130%; }
+  button.submit:hover:not(:disabled){ transform:translateY(-1px); background:#fff; }
+  button.submit:active:not(:disabled){ transform:translateY(0); }
+  button.submit:disabled{ opacity:0.55; cursor:not-allowed; }
+  button.submit svg{ width:15px; height:15px; transition:transform .3s ease; }
+  button.submit:hover:not(:disabled) svg{ transform:translateX(3px); }
+
+  .spinner{
+    width:13px; height:13px;
+    border-radius:50%;
+    border:2px solid rgba(16,14,23,0.25);
+    border-top-color:var(--ink);
+    animation:spin .7s linear infinite;
+    display:none;
+  }
+  .spinner.show{ display:inline-block; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
+  .hint-row{
+    margin-top:12px;
+    display:flex;
+    gap:8px;
+    flex-wrap:wrap;
+    opacity:0;
+    animation: fadeUp .7s ease .6s forwards;
+  }
+  .hint{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--muted);
+    background:var(--surface);
+    border:1px solid var(--border);
+    padding:7px 12px;
+    border-radius:100px;
+    cursor:pointer;
+    transition:border-color .18s ease, color .18s ease, transform .18s ease, box-shadow .18s ease;
+  }
+  .hint:hover{
+    border-color:var(--tint, var(--border-hi));
+    color:var(--text);
+    transform:translateY(-2px);
+    box-shadow:0 6px 18px -8px var(--tint, transparent);
+  }
+
+  .error-banner{
+    margin-top:16px;
+    font-family:var(--mono);
+    font-size:13px;
+    color:#ffb4a8;
+    background:rgba(232,84,63,0.1);
+    border:1px solid rgba(232,84,63,0.28);
+    padding:12px 16px;
+    border-radius:10px;
+    display:none;
+    animation: shake .4s ease;
+  }
+  .error-banner.show{ display:block; }
+  @keyframes shake{
+    0%,100%{ transform:translateX(0); }
+    25%{ transform:translateX(-4px); }
+    75%{ transform:translateX(4px); }
+  }
+
+  /* ---------- reading section ---------- */
+
+  .reading{
+    margin-top:72px;
+    padding-bottom:100px;
+    display:grid;
+    grid-template-columns:minmax(280px,380px) 1fr;
+    gap:56px;
+    align-items:center;
+    opacity:0;
+    transform:translateY(18px);
+    transition:opacity .55s cubic-bezier(.2,.8,.2,1), transform .55s cubic-bezier(.2,.8,.2,1);
+  }
+  .reading.show{ opacity:1; transform:translateY(0); }
+
+  .wheel-stage{
+    position:relative;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+
+  #wheelSvg{ overflow:visible; }
+  #wheelSvg.thinking .ring-guide{ animation: breathe 1.6s ease-in-out infinite; }
+  @keyframes breathe{
+    0%,100%{ opacity:0.06; }
+    50%{ opacity:0.16; }
+  }
+  #wheelSvg .wedge{ transition: d .75s cubic-bezier(.34,1.56,.64,1), fill-opacity .4s ease, stroke-width .4s ease; }
+
+  .wheel-caption{
+    position:absolute;
+    bottom:-34px;
+    left:0; right:0;
+    text-align:center;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+
+  .center-readout{
+    position:absolute;
+    top:50%; left:50%;
+    transform:translate(-50%,-50%);
+    text-align:center;
+    pointer-events:none;
+  }
+  .center-emoji{
+    font-size:38px;
+    line-height:1;
+    display:block;
+    filter:drop-shadow(0 4px 18px rgba(0,0,0,0.35));
+    transition:transform .4s cubic-bezier(.34,1.56,.64,1);
+  }
+  .center-emoji.pop{ animation: pop .55s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes pop{
+    0%{ transform:scale(0.3) rotate(-8deg); }
+    55%{ transform:scale(1.25) rotate(4deg); }
+    100%{ transform:scale(1) rotate(0deg); }
+  }
+  .center-label{
+    margin-top:8px;
+    font-family:var(--display);
+    font-style:italic;
+    font-size:19px;
+    color:var(--text);
+  }
+  .center-conf{
+    margin-top:2px;
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--muted);
+  }
+
+  .burst{
+    position:absolute;
+    top:50%; left:50%;
+    width:6px; height:6px;
+    border-radius:50%;
+    pointer-events:none;
+    opacity:1;
+  }
+
+  /* ---------- breakdown ---------- */
+
+  .breakdown-head{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    margin-bottom:18px;
+  }
+  .breakdown-head h2{
+    font-family:var(--display);
+    font-weight:400;
+    font-size:22px;
+  }
+  .breakdown-head .quoted{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--faint);
+    max-width:32ch;
+    text-align:right;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+
+  .bar-row{
+    display:grid;
+    grid-template-columns:120px 1fr 56px;
+    align-items:center;
+    gap:14px;
+    padding:9px 0;
+    border-bottom:1px solid var(--border);
+    opacity:0;
+    transform:translateX(-8px);
+    transition:opacity .45s ease, transform .45s ease;
+  }
+  .bar-row.in{ opacity:1; transform:translateX(0); }
+  .bar-row:last-child{ border-bottom:none; }
+  .bar-label{
+    font-size:14px;
+    font-weight:600;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .bar-label .dot{ width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .bar-track{
+    height:8px;
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:100px;
+    overflow:hidden;
+  }
+  .bar-fill{
+    height:100%;
+    width:0%;
+    border-radius:100px;
+    transition:width .8s cubic-bezier(.2,.8,.2,1);
+    position:relative;
+  }
+  .bar-fill::after{
+    content:'';
+    position:absolute; inset:0;
+    background:linear-gradient(90deg, transparent, rgba(255,255,255,0.35), transparent);
+    transform:translateX(-100%);
+  }
+  .bar-row.in .bar-fill::after{ animation: sheen 1s ease .3s; }
+  @keyframes sheen{ to{ transform:translateX(100%); } }
+  .bar-pct{ font-family:var(--mono); font-size:12.5px; color:var(--muted); text-align:right; }
+  .bar-row.dominant .bar-label{ color:var(--text); }
+  .bar-row.dominant .bar-pct{ color:var(--text); font-weight:600; }
+
+  /* ---------- empty state ---------- */
+
+  .empty-note{
+    margin-top:56px;
+    padding:28px;
+    border:1px dashed var(--border-hi);
+    border-radius:16px;
+    color:var(--faint);
+    font-size:14px;
+    max-width:640px;
+  }
+  .empty-note b{ color:var(--muted); }
+
+  footer{
+    border-top:1px solid var(--border);
+    padding:26px 0 40px;
+    display:flex;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:10px;
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--faint);
+  }
+
+  @media (max-width: 720px){
+    .reading{ grid-template-columns:1fr; gap:40px; }
+    .breakdown-head .quoted{ display:none; }
+    .bar-row{ grid-template-columns:96px 1fr 46px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ animation:none !important; transition:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="aurora"><span class="a1"></span><span class="a2"></span><span class="a3"></span></div>
+<div class="cursor-glow" id="cursorGlow"></div>
+<svg class="grain" xmlns="http://www.w3.org/2000/svg">
+  <filter id="noiseFilter"><feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch"/></filter>
+  <rect width="100%" height="100%" filter="url(#noiseFilter)"/>
+</svg>
+
+<div class="wrap">
+
+  <header>
+    <div class="header-row">
+      <div class="eyebrow"><b>Emotion Reader</b> · BiGRU classifier</div>
+      <div class="status"><span class="status-dot" id="statusDot"></span><span id="statusText">checking model…</span></div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <h1>
+      <span class="line"><span>Say something.</span></span>
+      <span class="line"><em><span>I'll tell you how it feels.</span></em></span>
+    </h1>
+    <p class="sub">Type a sentence and a bidirectional GRU reads it for six underlying emotions — not just positive or negative.</p>
+
+    <div class="console">
+      <textarea id="textInput" maxlength="2000" placeholder="I finally finished the thing I've been putting off for weeks…"></textarea>
+      <div class="console-footer">
+        <span class="listening" id="listening" style="visibility:hidden">
+          listening <span class="dots"><i></i><i></i><i></i></span>
+        </span>
+        <button class="submit" id="submitBtn">
+          <span class="spinner" id="spinner"></span>
+          <span id="submitLabel">Read the emotion</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="hint-row" id="hintRow">
+      <span class="hint" style="--tint:var(--joy)" data-text="I can't believe we actually pulled it off.">try: pulled it off</span>
+      <span class="hint" style="--tint:var(--fear)" data-text="I keep checking the door, something feels off tonight.">try: something feels off</span>
+      <span class="hint" style="--tint:var(--sadness)" data-text="I miss the way things used to be with us.">try: miss the way things were</span>
+      <span class="hint" style="--tint:var(--surprise)" data-text="Wait, you did WHAT to my car?!">try: you did what?!</span>
+    </div>
+
+    <div class="error-banner" id="errorBanner"></div>
+  </section>
+
+  <section class="reading" id="reading">
+    <div class="wheel-stage">
+      <svg id="wheelSvg" viewBox="0 0 300 300" width="280" height="280"></svg>
+      <div class="center-readout">
+        <span class="center-emoji" id="centerEmoji">🤔</span>
+        <div class="center-label" id="centerLabel">—</div>
+        <div class="center-conf" id="centerConf">confidence —</div>
+      </div>
+      <div class="wheel-caption">probability, mapped to radius</div>
+    </div>
+
+    <div class="breakdown">
+      <div class="breakdown-head">
+        <h2>Full reading</h2>
+        <span class="quoted" id="quotedText"></span>
+      </div>
+      <div id="barList"></div>
+    </div>
+  </section>
+
+  <div class="empty-note" id="emptyNote">
+    <b>Nothing read yet.</b> Every sentence carries a mix of feelings, not just one. Submit a line above and the wheel will show all six at once — the emotion in front is just the loudest.
+  </div>
+
+  <footer>
+    <span>Six-class model — sadness, joy, love, anger, fear, surprise</span>
+    <span>Served locally via FastAPI</span>
+  </footer>
+
+</div>
+
+<script>
+  // ---------- ambient cursor glow ----------
+  const glow = document.getElementById('cursorGlow');
+  window.addEventListener('mousemove', (e)=>{
+    glow.style.setProperty('--mx', e.clientX + 'px');
+    glow.style.setProperty('--my', e.clientY + 'px');
+  }, { passive:true });
+
+  // ---------- wheel ----------
+  const EMOTIONS = [
+    { key:'fear',     label:'Fear',     emoji:'😨', color:'#8a63d4', angle:-90 },
+    { key:'surprise',  label:'Surprise', emoji:'😲', color:'#2fbf9d', angle:-30 },
+    { key:'joy',       label:'Joy',      emoji:'😊', color:'#f2b705', angle:30  },
+    { key:'love',      label:'Love',     emoji:'❤️', color:'#ef5da8', angle:90  },
+    { key:'sadness',   label:'Sadness',  emoji:'😢', color:'#5c7aea', angle:150 },
+    { key:'anger',     label:'Anger',    emoji:'😡', color:'#e8543f', angle:210 },
+  ];
+
+  const CX = 150, CY = 150, R_MIN = 26, R_MAX = 118;
+  const svg = document.getElementById('wheelSvg');
+  const NS = 'http://www.w3.org/2000/svg';
+
+  function polar(cx, cy, r, angleDeg){
+    const a = (angleDeg - 90) * Math.PI / 180;
+    return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  }
+
+  function buildWheel(){
+    svg.innerHTML = '';
+    [0.33,0.66,1].forEach(f=>{
+      const c = document.createElementNS(NS,'circle');
+      c.setAttribute('class','ring-guide');
+      c.setAttribute('cx',CX); c.setAttribute('cy',CY);
+      c.setAttribute('r', R_MIN + f*(R_MAX-R_MIN));
+      c.setAttribute('fill','none');
+      c.setAttribute('stroke','rgba(243,239,230,0.07)');
+      c.setAttribute('stroke-width','1');
+      svg.appendChild(c);
+    });
+
+    const step = 60;
+    EMOTIONS.forEach((e)=>{
+      const wedge = document.createElementNS(NS,'path');
+      wedge.setAttribute('id', 'wedge-'+e.key);
+      wedge.setAttribute('class','wedge');
+      wedge.setAttribute('fill', e.color);
+      wedge.setAttribute('fill-opacity', '0.16');
+      wedge.setAttribute('stroke', e.color);
+      wedge.setAttribute('stroke-width','1.4');
+      wedge.setAttribute('stroke-linejoin','round');
+      svg.appendChild(wedge);
+
+      const p = polar(CX,CY,R_MAX+2,e.angle);
+      const line = document.createElementNS(NS,'line');
+      line.setAttribute('x1',CX); line.setAttribute('y1',CY);
+      line.setAttribute('x2',p.x); line.setAttribute('y2',p.y);
+      line.setAttribute('stroke','rgba(243,239,230,0.05)');
+      svg.appendChild(line);
+
+      const lp = polar(CX,CY,R_MAX+26,e.angle);
+      const text = document.createElementNS(NS,'text');
+      text.setAttribute('x', lp.x);
+      text.setAttribute('y', lp.y);
+      text.setAttribute('text-anchor','middle');
+      text.setAttribute('dominant-baseline','middle');
+      text.setAttribute('font-family','JetBrains Mono, monospace');
+      text.setAttribute('font-size','9.5');
+      text.setAttribute('letter-spacing','0.05em');
+      text.setAttribute('fill','#9a93a8');
+      text.textContent = e.label.toUpperCase();
+      svg.appendChild(text);
+    });
+
+    setWedges(EMOTIONS.map(()=>1/6), null);
+  }
+
+  function setWedges(probs, dominantKey, stagger){
+    const step = 60;
+    EMOTIONS.forEach((e,i)=>{
+      const prob = probs[i];
+      const draw = ()=>{
+        const r = R_MIN + prob * (R_MAX - R_MIN);
+        const start = e.angle - step/2;
+        const end = e.angle + step/2;
+        const p1 = polar(CX,CY,r,start);
+        const p2 = polar(CX,CY,r,end);
+        const d = `M ${CX} ${CY} L ${p1.x.toFixed(2)} ${p1.y.toFixed(2)} A ${r.toFixed(2)} ${r.toFixed(2)} 0 0 1 ${p2.x.toFixed(2)} ${p2.y.toFixed(2)} Z`;
+        const wedge = document.getElementById('wedge-'+e.key);
+        wedge.setAttribute('d', d);
+        const isDom = e.key === dominantKey;
+        wedge.setAttribute('fill-opacity', isDom ? '0.6' : '0.14');
+        wedge.setAttribute('stroke-width', isDom ? '2.4' : '1.2');
+      };
+      if(stagger){ setTimeout(draw, i*45); } else { draw(); }
+    });
+  }
+
+  buildWheel();
+
+  function burstParticles(color){
+    const stage = document.querySelector('.wheel-stage');
+    for(let i=0;i<14;i++){
+      const p = document.createElement('div');
+      p.className = 'burst';
+      p.style.background = color;
+      stage.appendChild(p);
+      const angle = Math.random()*Math.PI*2;
+      const dist = 60 + Math.random()*70;
+      const dx = Math.cos(angle)*dist;
+      const dy = Math.sin(angle)*dist;
+      p.animate([
+        { transform:'translate(-50%,-50%) scale(1)', opacity:1 },
+        { transform:`translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(0)`, opacity:0 }
+      ], { duration: 700 + Math.random()*300, easing:'cubic-bezier(.2,.8,.2,1)' });
+      setTimeout(()=>p.remove(), 1100);
+    }
+  }
+
+  // ---------- interaction ----------
+
+  const textInput = document.getElementById('textInput');
+  const listening = document.getElementById('listening');
+  const submitBtn = document.getElementById('submitBtn');
+  const submitLabel = document.getElementById('submitLabel');
+  const spinner = document.getElementById('spinner');
+  const errorBanner = document.getElementById('errorBanner');
+  const reading = document.getElementById('reading');
+  const emptyNote = document.getElementById('emptyNote');
+  const barList = document.getElementById('barList');
+  const quotedText = document.getElementById('quotedText');
+  const centerEmoji = document.getElementById('centerEmoji');
+  const centerLabel = document.getElementById('centerLabel');
+  const centerConf = document.getElementById('centerConf');
+
+  textInput.addEventListener('input', ()=>{
+    listening.style.visibility = textInput.value.length ? 'visible' : 'hidden';
+  });
+
+  document.querySelectorAll('.hint').forEach(h=>{
+    h.addEventListener('click', ()=>{
+      textInput.value = h.dataset.text;
+      listening.style.visibility = 'visible';
+      textInput.focus();
+    });
+  });
+
+  function showError(msg){
+    errorBanner.textContent = msg;
+    errorBanner.classList.remove('show');
+    void errorBanner.offsetWidth;
+    errorBanner.classList.add('show');
+  }
+  function hideError(){ errorBanner.classList.remove('show'); }
+
+  function countUp(el, target, duration){
+    const start = performance.now();
+    function tick(now){
+      const t = Math.min(1, (now-start)/duration);
+      const eased = 1 - Math.pow(1-t, 3);
+      el.textContent = (target*eased).toFixed(1) + '%';
+      if(t<1) requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function buildBars(allProbs, dominant){
+    barList.innerHTML = '';
+    const sorted = [...EMOTIONS].sort((a,b)=> allProbs[b.key]-allProbs[a.key]);
+    sorted.forEach((e,i)=>{
+      const pct = allProbs[e.key]*100;
+      const row = document.createElement('div');
+      row.className = 'bar-row' + (e.key===dominant ? ' dominant' : '');
+      row.innerHTML = `
+        <div class="bar-label"><span class="dot" style="background:${e.color}"></span>${e.emoji} ${e.label}</div>
+        <div class="bar-track"><div class="bar-fill" style="background:${e.color}"></div></div>
+        <div class="bar-pct">0.0%</div>
+      `;
+      barList.appendChild(row);
+      const fill = row.querySelector('.bar-fill');
+      const pctEl = row.querySelector('.bar-pct');
+      setTimeout(()=>{
+        row.classList.add('in');
+        fill.style.width = pct + '%';
+        countUp(pctEl, pct, 700);
+      }, i*70);
+    });
+  }
+
+  async function submitText(){
+    const text = textInput.value.trim();
+    hideError();
+    if(!text){
+      showError('Type something first — even a short sentence works.');
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitLabel.textContent = 'Reading';
+    spinner.classList.add('show');
+    svg.classList.add('thinking');
+
+    try{
+      const res = await fetch('/predict', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ text })
+      });
+
+      if(res.status === 503){
+        showError("Model isn't loaded yet. Give it a few seconds and try again.");
+        return;
+      }
+      if(!res.ok){
+        const body = await res.json().catch(()=>({}));
+        showError(body.detail || `Something went wrong (${res.status}). Try again.`);
+        return;
+      }
+
+      const data = await res.json();
+      const dominantMeta = EMOTIONS.find(e=>e.key===data.predicted_emotion);
+      const probs = EMOTIONS.map(e => data.all_probabilities[e.key] ?? 0);
+
+      setWedges(probs, data.predicted_emotion, true);
+      buildBars(data.all_probabilities, data.predicted_emotion);
+
+      centerEmoji.textContent = dominantMeta ? dominantMeta.emoji : '🤔';
+      centerEmoji.classList.remove('pop');
+      void centerEmoji.offsetWidth;
+      centerEmoji.classList.add('pop');
+      centerLabel.textContent = dominantMeta ? dominantMeta.label : data.predicted_emotion;
+      centerConf.textContent = 'confidence ' + (data.confidence*100).toFixed(1) + '%';
+      quotedText.textContent = '“' + data.text + '”';
+
+      emptyNote.style.display = 'none';
+      reading.classList.add('show');
+
+      setTimeout(()=> burstParticles(dominantMeta ? dominantMeta.color : '#f3efe6'), 320);
+
+    }catch(err){
+      showError("Couldn't reach the server. Check it's running and try again.");
+    }finally{
+      submitBtn.disabled = false;
+      submitLabel.textContent = 'Read the emotion';
+      spinner.classList.remove('show');
+      svg.classList.remove('thinking');
+    }
+  }
+
+  submitBtn.addEventListener('click', submitText);
+  textInput.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitText();
+  });
+
+  // ---------- health check ----------
+
+  async function checkHealth(){
+    const dot = document.getElementById('statusDot');
+    const label = document.getElementById('statusText');
+    try{
+      const res = await fetch('/health');
+      const data = await res.json();
+      if(data.model_loaded){
+        dot.className = 'status-dot on';
+        label.textContent = 'model ready';
+      }else{
+        dot.className = 'status-dot off';
+        label.textContent = 'model loading…';
+      }
+    }catch(e){
+      dot.className = 'status-dot off';
+      label.textContent = 'server unreachable';
+    }
+  }
+
+  checkHealth();
+  setInterval(checkHealth, 15000);
+</script>
+
+</body>
+</html>
