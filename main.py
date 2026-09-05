@@ -113,6 +113,7 @@ async def lifespan(app: FastAPI):
     session = ort.InferenceSession(model_path)
     dl_model["session"] = session
     dl_model["input_name"] = session.get_inputs()[0].name
+    dl_model["output_name"] = session.get_outputs()[0].name
 
     # Load tokenizer
     with open(tokenizer_path, "rb") as file:
@@ -195,6 +196,7 @@ def predict_emotion(text_input: TextInput):
     # Get ONNX session
     session = dl_model.get("session")
     input_name = dl_model.get("input_name")
+    output_name = dl_model.get("output_name")
 
     # Get tokenizer
     tokenizer_model = dl_model.get("tokenizer")
@@ -235,7 +237,7 @@ def predict_emotion(text_input: TextInput):
     # --------------------------------------------------------
 
     input_data = padded_text.astype(np.float32)
-    probabilities = session.run(None, {input_name: input_data})[0][0]
+    probabilities = session.run([output_name], {input_name: input_data})[0][0]
 
     # --------------------------------------------------------
     # 5. Find highest probability emotion
