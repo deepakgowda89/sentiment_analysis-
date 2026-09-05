@@ -6,8 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.sequence import pad_sequences
+import tflite_runtime.interpreter as tflite
 
 import numpy as np
 import re
@@ -19,10 +18,10 @@ import pickle
 # ============================================================
 
 # Model path
-model_path = "Artifacts/Bigru_model.keras"
+model_path = "Artifacts/Bigru_model.tflite"
 
 # Tokenizer path
-tokenizer_path = r"Artifacts\tokenizer_pkl"
+tokenizer_path = "Artifacts/tokenizer_pkl"
 
 # Maximum sequence length
 max_length = 50
@@ -110,8 +109,12 @@ async def lifespan(app: FastAPI):
 
     print("Loading the model and tokenizer...")
 
-    # Load BiGRU model
-    dl_model["BiGRU"] = load_model(model_path)
+    # Load TFLite interpreter
+    interpreter = tflite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
+    dl_model["interpreter"] = interpreter
+    dl_model["input_details"] = interpreter.get_input_details()
+    dl_model["output_details"] = interpreter.get_output_details()
 
     # Load tokenizer
     with open(tokenizer_path, "rb") as file:
@@ -191,14 +194,16 @@ def health_check():
 @app.post("/predict", response_model=PredictionResponse)
 def predict_emotion(text_input: TextInput):
 
-    # Get model
-    bigru_model = dl_model.get("BiGRU")
+    # Get TFLite interpreter
+    interpreter = dl_model.get("interpreter")
+    input_details = dl_model.get("input_details")
+    output_details = dl_model.get("output_details")
 
     # Get tokenizer
     tokenizer_model = dl_model.get("tokenizer")
 
     # Check model availability
-    if bigru_model is None or tokenizer_model is None:
+    if interpreter is None or tokenizer_model is None:
         raise HTTPException(
             status_code=503,
             detail="Model is not loaded yet. Please try again later."
@@ -222,21 +227,20 @@ def predict_emotion(text_input: TextInput):
     # 3. Padding
     # --------------------------------------------------------
 
-    padded_text = pad_sequences(
-        tokenized_text,
-        maxlen=max_length,
-        padding="post",
-        truncating="post"
-    )
+    # Replicate pad_sequences with post-padding/truncating using numpy
+    seq = tokenized_text[0][:max_length]
+    padded = np.zeros((1, max_length), dtype=np.float32)
+    padded[0, :len(seq)] = seq
+    padded_text = padded
 
     # --------------------------------------------------------
     # 4. Prediction
     # --------------------------------------------------------
 
-    probabilities = bigru_model.predict(
-        padded_text,
-        verbose=0
-    )[0]
+    input_data = padded_text.astype(np.float32)
+    interpreter.set_tensor(input_details[0]["index"], input_data)
+    interpreter.invoke()
+    probabilities = interpreter.get_tensor(output_details[0]["index"])[0]
 
     # --------------------------------------------------------
     # 5. Find highest probability emotion
