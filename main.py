@@ -21,7 +21,7 @@ import pickle
 model_path = "Artifacts/Bigru_model.onnx"
 
 # Tokenizer path
-tokenizer_path = "Artifacts/tokenizer_pkl"
+tokenizer_path = "Artifacts/tokenizer_word_index.pkl"
 
 # Maximum sequence length
 max_length = 50
@@ -115,9 +115,9 @@ async def lifespan(app: FastAPI):
     dl_model["input_name"] = session.get_inputs()[0].name
     dl_model["output_name"] = session.get_outputs()[0].name
 
-    # Load tokenizer
+    # Load tokenizer word index (plain dict, no Keras dependency)
     with open(tokenizer_path, "rb") as file:
-        dl_model["tokenizer"] = pickle.load(file)
+        dl_model["word_index"] = pickle.load(file)
 
     print("Model loaded successfully")
 
@@ -198,11 +198,11 @@ def predict_emotion(text_input: TextInput):
     input_name = dl_model.get("input_name")
     output_name = dl_model.get("output_name")
 
-    # Get tokenizer
-    tokenizer_model = dl_model.get("tokenizer")
+    # Get tokenizer word index
+    word_index = dl_model.get("word_index")
 
     # Check model availability
-    if session is None or tokenizer_model is None:
+    if session is None or word_index is None:
         raise HTTPException(
             status_code=503,
             detail="Model is not loaded yet. Please try again later."
@@ -215,28 +215,24 @@ def predict_emotion(text_input: TextInput):
     cleaned_text = preprocessing_txt(text_input.text)
 
     # --------------------------------------------------------
-    # 2. Tokenization
+    # 2. Tokenization (pure Python, no Keras)
     # --------------------------------------------------------
 
-    tokenized_text = tokenizer_model.texts_to_sequences(
-        [cleaned_text]
-    )
+    tokens = [word_index.get(w, 0) for w in cleaned_text.split()]
 
     # --------------------------------------------------------
     # 3. Padding
     # --------------------------------------------------------
 
-    # Replicate pad_sequences with post-padding/truncating using numpy
-    seq = tokenized_text[0][:max_length]
+    seq = tokens[:max_length]
     padded = np.zeros((1, max_length), dtype=np.float32)
     padded[0, :len(seq)] = seq
-    padded_text = padded
 
     # --------------------------------------------------------
     # 4. Prediction
     # --------------------------------------------------------
 
-    input_data = padded_text.astype(np.float32)
+    input_data = padded.astype(np.float32)
     probabilities = session.run([output_name], {input_name: input_data})[0][0]
 
     # --------------------------------------------------------
