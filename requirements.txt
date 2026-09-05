@@ -1,6 +1,6 @@
 fastapi==0.115.14
 uvicorn[standard]==0.34.3
 pydantic==2.10.6
-tflite-runtime==2.14.0
+tensorflow-cpu==2.21.0
 numpy==1.26.4
 gunicorn==23.0.0

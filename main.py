@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
-import tflite_runtime.interpreter as tflite
+import tensorflow as tf
 
 import numpy as np
 import re
@@ -110,7 +110,7 @@ async def lifespan(app: FastAPI):
     print("Loading the model and tokenizer...")
 
     # Load TFLite interpreter
-    interpreter = tflite.Interpreter(model_path=model_path)
+    interpreter = tf.lite.Interpreter(model_path=model_path)
     interpreter.allocate_tensors()
     dl_model["interpreter"] = interpreter
     dl_model["input_details"] = interpreter.get_input_details()
