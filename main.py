@@ -19,7 +19,7 @@ import pickle
 # ============================================================
 
 # Model path
-model_path = r"C:\Users\deepa\OneDrive\Documents\Desktop\Sentiment Analysis\Artifacts\Bigru_model.keras"
+model_path = "Artifacts/Bigru_model.keras"
 
 # Tokenizer path
 tokenizer_path = r"Artifacts\tokenizer_pkl"
