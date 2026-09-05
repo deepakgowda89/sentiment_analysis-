@@ -1,6 +1,6 @@
 fastapi==0.115.14
 uvicorn[standard]==0.34.3
 pydantic==2.10.6
-tensorflow-cpu==2.21.0
+onnxruntime==1.20.1
 numpy==1.26.4
 gunicorn==23.0.0

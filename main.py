@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from contextlib import asynccontextmanager
 
-import tensorflow as tf
+import onnxruntime as ort
 
 import numpy as np
 import re
@@ -18,7 +18,7 @@ import pickle
 # ============================================================
 
 # Model path
-model_path = "Artifacts/Bigru_model.tflite"
+model_path = "Artifacts/Bigru_model.onnx"
 
 # Tokenizer path
 tokenizer_path = "Artifacts/tokenizer_pkl"
@@ -109,12 +109,10 @@ async def lifespan(app: FastAPI):
 
     print("Loading the model and tokenizer...")
 
-    # Load TFLite interpreter
-    interpreter = tf.lite.Interpreter(model_path=model_path)
-    interpreter.allocate_tensors()
-    dl_model["interpreter"] = interpreter
-    dl_model["input_details"] = interpreter.get_input_details()
-    dl_model["output_details"] = interpreter.get_output_details()
+    # Load ONNX inference session
+    session = ort.InferenceSession(model_path)
+    dl_model["session"] = session
+    dl_model["input_name"] = session.get_inputs()[0].name
 
     # Load tokenizer
     with open(tokenizer_path, "rb") as file:
@@ -194,16 +192,15 @@ def health_check():
 @app.post("/predict", response_model=PredictionResponse)
 def predict_emotion(text_input: TextInput):
 
-    # Get TFLite interpreter
-    interpreter = dl_model.get("interpreter")
-    input_details = dl_model.get("input_details")
-    output_details = dl_model.get("output_details")
+    # Get ONNX session
+    session = dl_model.get("session")
+    input_name = dl_model.get("input_name")
 
     # Get tokenizer
     tokenizer_model = dl_model.get("tokenizer")
 
     # Check model availability
-    if interpreter is None or tokenizer_model is None:
+    if session is None or tokenizer_model is None:
         raise HTTPException(
             status_code=503,
             detail="Model is not loaded yet. Please try again later."
@@ -238,9 +235,7 @@ def predict_emotion(text_input: TextInput):
     # --------------------------------------------------------
 
     input_data = padded_text.astype(np.float32)
-    interpreter.set_tensor(input_details[0]["index"], input_data)
-    interpreter.invoke()
-    probabilities = interpreter.get_tensor(output_details[0]["index"])[0]
+    probabilities = session.run(None, {input_name: input_data})[0][0]
 
     # --------------------------------------------------------
     # 5. Find highest probability emotion
